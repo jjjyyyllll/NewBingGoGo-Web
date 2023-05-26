@@ -1,9 +1,9 @@
 let joinStats = true;  //可选加入统计。 加入统计不会收集任何隐私信息，仅统计访问量。
 let webPath = 'https://raw.githubusercontent.com/jianjianai/NewBingGoGo-Web/master/src/main/resources'; //web页面地址，可以修改成自己的仓库来自定义前端页面
-let serverConfig = { //此配置需要插件需要2023.5.22.0以上版本才会生效
+let serverConfig = {
     "h1": "NewBingGoGo",
     "h2": "简单开始和NewBing聊天",
-    "p": "",
+    "p":"",
     "firstMessages":[
         "好的，我已清理好板子，可以重新开始了。我可以帮助你探索什么?",
         "明白了，我已经抹去了过去，专注于现在。我们现在应该探索什么?",
@@ -48,7 +48,6 @@ let cookies = [
 ]
 
 
-
 export default {
     async fetch(request, _env) {
         return await handleRequest(request);
@@ -78,7 +77,15 @@ async function handleRequest(request) {
     }
 
     if (path === '/sydney/ChatHub') { //魔法聊天
-        return bingChatHub(request)
+        let h = {
+            "sec-fetch-site": "same-origin",
+            "referer": "https://www.bing.com/search?q=bingAI"
+        }
+        let randomAddress = url.searchParams.get("randomAddress");
+        if(randomAddress){
+            h["X-forwarded-for"] = randomAddress;
+        }
+        return goUrl(request,"https://sydney.bing.com/sydney/ChatHub",h);
     }
     if (path === "/turing/conversation/create") { //创建聊天
         return goUrl(request, "https://www.bing.com/turing/conversation/create");
@@ -183,12 +190,21 @@ async function goUrl(request, url, addHeaders) {
     }
     //保留头部信息
     let reqHeaders = request.headers;
-    let dropHeaders = ["user-agent", "accept", "accept-language"];
+    let dropHeaders = ["user-agent", "accept", "accept-language","Connection","Upgrade"];
     for (let h of dropHeaders) {
         if (reqHeaders.has(h)) {
             fp.headers[h] = reqHeaders.get(h);
         }
     }
+
+    //客户端指定的随机地址
+    let randomAddress = reqHeaders.get("randomAddress");
+    if(!randomAddress){
+        randomAddress = "12.24.144.227";
+    }
+    //添加X-forwarded-for
+    fp.headers['X-forwarded-for'] = randomAddress;
+
     if (addHeaders) {
         //添加头部信息
         for (let h in addHeaders) {
@@ -217,22 +233,10 @@ async function goUrl(request, url, addHeaders) {
         fp.headers["cookie"] = reqHeaders.get('cookie');
     }
 
-    //客户端指定的随机地址
-    let randomAddress = reqHeaders.get("randomAddress");
-    if(!randomAddress){
-        randomAddress = "12.24.144.227";
-    }
-    //添加X-forwarded-for
-    fp.headers['X-forwarded-for'] = randomAddress;
-
     let res = await fetch(url, fp);
-    let headers = new Headers(res.headers);
-    headers.set("cookieID",cookieID);
-    return new Response(res.body,{
-        status:res.status,
-        statusText:res.statusText,
-        headers:headers
-    });
+    let newRes = new Response(res.body,res);
+    newRes.headers.set("cookieID",cookieID);
+    return newRes;
 }
 
 //获取用于返回的错误信息
@@ -262,41 +266,3 @@ function getRedirect(url) {
     })
 }
 
-//websocket
-function bingChatHub(request) {
-    // 如果请求包含 Upgrade 头，说明是 WebSocket 连接
-    if (request.headers.get('Upgrade') === 'websocket') {
-        const webSocketPair = new WebSocketPair()
-        const serverWebSocket = webSocketPair[1]
-        var bingws = new WebSocket('wss://sydney.bing.com/sydney/ChatHub')
-        serverWebSocket.onmessage = event => {
-            bingws.send(event.data);
-        }
-        bingws.onmessage = event => {
-            serverWebSocket.send(event.data)
-        }
-        bingws.onopen = event => {
-            serverWebSocket.accept();
-        }
-        bingws.onclose = event => {
-            serverWebSocket.close(event.code, event.reason);
-        }
-        bingws.onerror = event => {
-            serverWebSocket.send(JSON.stringify({
-                type: 'error',
-                mess: "workers接到bing错误：" + event
-            }));
-            serverWebSocket.close();
-        }
-        serverWebSocket.onerror = event => {
-            serverWebSocket.close();
-        }
-        serverWebSocket.onclose = event => {
-            bingws.close(event.code, event.reason);
-        }
-
-        return new Response(null, { status: 101, webSocket: webSocketPair[0] })
-    } else {
-        return new Response('这不是websocket请求！')
-    }
-}
